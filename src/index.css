@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+@layer base {
+  html {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  }
+  
+  body {
+    background-color: #0a0e17;
+    color: #f1f5f9;
+  }
+}
+
+@layer components {
+  /* Code Line Styling */
+  .code-line {
+    display: flex;
+    flex-direction: row;
+  }
+  
+  .line-number {
+    color: #475569;
+    user-select: none;
+    padding-right: 1rem;
+    text-align: right;
+    flex-shrink: 0;
+    min-width: 3rem;
+  }
+  
+  .line-content {
+    white-space: pre;
+    overflow-x: auto;
+  }
+  
+  /* Secret Highlight Styles */
+  .highlight-high {
+    background-color: rgba(127, 29, 29, 0.5);
+    color: #fca5a5;
+    padding: 0.125rem;
+    border-radius: 0.25rem;
+    animation: pulse-high 2s ease-in-out infinite;
+  }
+  
+  .highlight-medium {
+    background-color: rgba(124, 45, 14, 0.5);
+    color: #fdba74;
+    padding: 0.125rem;
+    border-radius: 0.25rem;
+  }
+  
+  .highlight-low {
+    background-color: rgba(113, 63, 18, 0.5);
+    color: #fde047;
+    padding: 0.125rem;
+    border-radius: 0.25rem;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-high {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes scan-line {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.3);
+  border-radius: 0.25rem;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 0.25rem;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Selection */
+::selection {
+  background: rgba(34, 211, 238, 0.3);
+  color: white;
+}
+
+/* Focus States */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.5), 0 0 0 4px rgba(10, 14, 23, 1);
+}
+
+/* Drag and Drop Visual */
+.drop-zone-active {
+  border-color: #22d3ee;
+  background-color: rgba(34, 211, 238, 0.1);
+  transform: scale(1.02);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Hide scrollbar for code displays while keeping functionality */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
