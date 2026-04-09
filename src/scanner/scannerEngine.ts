@@ -1,62 +1,123 @@
 import { ScanResult, FileData } from '../types';
 import { SECRET_PATTERNS, Pattern } from './patterns';
 
+// ----------------------------------------------------------------------
+//  Utilities
+// ----------------------------------------------------------------------
+
 function generateId(): string {
-  return `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `scan_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 }
 
 function escapeHtml(text: string): string {
-  const map: { [key: string]: string } = {
+  const map: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
     '>': '&gt;',
     '"': '&quot;',
-    "'": '&#039;'
+    "'": '&#39;'
   };
-  return text.replace(/[&<>"']/g, char => map[char]);
+  return text.replace(/[&<>"']/g, ch => map[ch]);
 }
 
-function maskSecret(text: string, _pattern: Pattern): string {
-  if (text.length <= 8) {
-    return '*'.repeat(text.length);
+/**
+ * Advanced masking:
+ * - Very short secrets (≤8) → fully masked.
+ * - Short (9‑15) → show first 2 + last 2.
+ * - Medium (16‑31) → show first 4 + last 4.
+ * - Long (≥32) → show first 6 + last 6.
+ * - JWT tokens keep header and signature visible but mask payload.
+ */
+function maskSecret(secret: string, pattern: Pattern): string {
+  const len = secret.length;
+  if (len <= 8) return '*'.repeat(len);
+
+  // Special handling for JWT tokens
+  if (pattern.name === 'JWT Token' && secret.includes('.')) {
+    const parts = secret.split('.');
+    if (parts.length === 3) {
+      // Keep header and signature, mask payload
+      const maskedPayload = '*'.repeat(parts[1].length);
+      return `${parts[0]}.${maskedPayload}.${parts[2]}`;
+    }
   }
-  const visibleStart = Math.min(4, Math.floor(text.length * 0.2));
-  const visibleEnd = Math.min(4, Math.floor(text.length * 0.2));
-  return text.substring(0, visibleStart) + '*'.repeat(text.length - visibleStart - visibleEnd) + text.substring(text.length - visibleEnd);
+
+  let visibleStart: number, visibleEnd: number;
+  if (len <= 15) {
+    visibleStart = 2;
+    visibleEnd = 2;
+  } else if (len <= 31) {
+    visibleStart = 4;
+    visibleEnd = 4;
+  } else {
+    visibleStart = 6;
+    visibleEnd = 6;
+  }
+
+  const start = secret.slice(0, visibleStart);
+  const end = secret.slice(-visibleEnd);
+  const middle = '*'.repeat(len - visibleStart - visibleEnd);
+  return start + middle + end;
 }
+
+/**
+ * Normalize line endings and optionally skip comment lines
+ */
+function shouldSkipLine(line: string, ignoreComments: boolean = true): boolean {
+  if (!ignoreComments) return false;
+  const trimmed = line.trim();
+  return trimmed.startsWith('//') || trimmed.startsWith('#');
+}
+
+// ----------------------------------------------------------------------
+//  Core scanning logic (advanced)
+// ----------------------------------------------------------------------
 
 export function scanText(
   content: string,
   fileName?: string,
-  patterns: Pattern[] = SECRET_PATTERNS
+  patterns: Pattern[] = SECRET_PATTERNS,
+  options?: { ignoreComments?: boolean }
 ): ScanResult[] {
+  const ignoreComments = options?.ignoreComments ?? true;
   const results: ScanResult[] = [];
-  const lines = content.split('\n');
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    
-    for (const pattern of patterns) {
-      const regex = new RegExp(pattern.regex.source, pattern.regex.flags);
+  // Normalize line endings
+  const normalized = content.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+
+  // Pre‑compile all regexes once (performance)
+  const compiledPatterns = patterns.map(p => ({
+    ...p,
+    regex: new RegExp(p.regex.source, p.regex.flags)
+  }));
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    if (shouldSkipLine(line, ignoreComments)) continue;
+
+    for (const pattern of compiledPatterns) {
+      // Reset lastIndex because we reuse the same regex object
+      pattern.regex.lastIndex = 0;
       let match: RegExpExecArray | null;
-      
-      while ((match = regex.exec(line)) !== null) {
+
+      while ((match = pattern.regex.exec(line)) !== null) {
         const matchedText = match[0];
-        
-        const contextStart = Math.max(0, match.index - 30);
-        const contextEnd = Math.min(line.length, match.index + matchedText.length + 30);
+
+        // Build context (30 chars before/after)
+        const ctxStart = Math.max(0, match.index - 30);
+        const ctxEnd = Math.min(line.length, match.index + matchedText.length + 30);
         let context = '';
-        
-        if (contextStart > 0) context += '...';
-        context += line.substring(contextStart, contextEnd);
-        if (contextEnd < line.length) context += '...';
+        if (ctxStart > 0) context += '...';
+        context += line.substring(ctxStart, ctxEnd);
+        if (ctxEnd < line.length) context += '...';
 
         results.push({
           id: generateId(),
           type: pattern.type,
           pattern: pattern.name,
           severity: pattern.severity,
-          line: lineIndex + 1,
+          line: lineIdx + 1,
           column: match.index + 1,
           matchedText: maskSecret(matchedText, pattern),
           context: escapeHtml(context),
@@ -68,50 +129,56 @@ export function scanText(
     }
   }
 
-  return results;
+  // Deduplicate identical findings (same file, line, column, pattern)
+  const unique = new Map<string, ScanResult>();
+  for (const r of results) {
+    const key = `${r.fileName}|${r.line}|${r.column}|${r.pattern}`;
+    if (!unique.has(key)) unique.set(key, r);
+  }
+
+  return Array.from(unique.values());
 }
 
-export function scanFiles(files: FileData[]): ScanResult[] {
+export function scanFiles(
+  files: FileData[],
+  options?: { ignoreComments?: boolean }
+): ScanResult[] {
   const allResults: ScanResult[] = [];
-  
   for (const file of files) {
-    const fileResults = scanText(file.content, file.name);
+    const fileResults = scanText(file.content, file.name, SECRET_PATTERNS, options);
     allResults.push(...fileResults);
   }
-  
+
+  // Sort: high severity first, then medium, then low, then by line number
   allResults.sort((a, b) => {
-    if (a.severity === 'high' && b.severity !== 'high') return -1;
-    if (a.severity !== 'high' && b.severity === 'high') return 1;
-    if (a.severity === 'medium' && b.severity === 'low') return -1;
-    if (a.severity === 'low' && b.severity === 'medium') return 1;
+    const severityRank = { high: 0, medium: 1, low: 2 };
+    const rankDiff = severityRank[a.severity] - severityRank[b.severity];
+    if (rankDiff !== 0) return rankDiff;
     return a.line - b.line;
   });
 
   return allResults;
 }
 
+// ----------------------------------------------------------------------
+//  Highlighting helpers (unchanged signatures, but robust)
+// ----------------------------------------------------------------------
+
 export function getLineWithHighlights(
   content: string,
   lineNumber: number,
   findings: ScanResult[]
 ): { line: string; highlights: Array<{ start: number; end: number; severity: string }> } {
-  const lines = content.split('\n');
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
   const line = lines[lineNumber - 1] || '';
-  
-  const highlights: Array<{ start: number; end: number; severity: string }> = [];
-  
-  for (const finding of findings) {
-    if (finding.line === lineNumber) {
-      highlights.push({
-        start: finding.startIndex,
-        end: finding.endIndex,
-        severity: finding.severity
-      });
-    }
-  }
-  
+  const highlights = findings
+    .filter(f => f.line === lineNumber)
+    .map(f => ({
+      start: f.startIndex,
+      end: f.endIndex,
+      severity: f.severity
+    }));
   highlights.sort((a, b) => a.start - b.start);
-  
   return { line: escapeHtml(line), highlights };
 }
 
@@ -120,53 +187,44 @@ export function highlightCode(
   findings: ScanResult[],
   fileName?: string
 ): string {
-  const lines = content.split('\n');
-  const fileFindings = fileName 
+  const normalized = content.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const fileFindings = fileName
     ? findings.filter(f => f.fileName === fileName)
     : findings;
 
+  // Group highlights by line number
   const lineHighlights = new Map<number, Array<{ start: number; end: number; severity: string }>>();
-  
-  for (const finding of fileFindings) {
-    if (!lineHighlights.has(finding.line)) {
-      lineHighlights.set(finding.line, []);
-    }
-    lineHighlights.get(finding.line)!.push({
-      start: finding.startIndex,
-      end: finding.endIndex,
-      severity: finding.severity
-    });
+  for (const f of fileFindings) {
+    const list = lineHighlights.get(f.line) || [];
+    list.push({ start: f.startIndex, end: f.endIndex, severity: f.severity });
+    lineHighlights.set(f.line, list);
   }
 
   let result = '';
-  
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
-    const line = lines[i];
+    const rawLine = lines[i];
     const highlights = lineHighlights.get(lineNum) || [];
-    
+
     if (highlights.length === 0) {
-      result += `<span class="code-line"><span class="line-number">${String(lineNum).padStart(4, ' ')}</span><span class="line-content">${escapeHtml(line)}</span></span>\n`;
+      result += `<span class="code-line"><span class="line-number">${String(lineNum).padStart(4, ' ')}</span><span class="line-content">${escapeHtml(rawLine)}</span></span>\n`;
     } else {
       highlights.sort((a, b) => a.start - b.start);
-      let highlightedLine = '';
-      let lastEnd = 0;
-      
+      let highlighted = '';
+      let lastIdx = 0;
       for (const hl of highlights) {
-        if (hl.start > lastEnd) {
-          highlightedLine += escapeHtml(line.substring(lastEnd, hl.start));
+        if (hl.start > lastIdx) {
+          highlighted += escapeHtml(rawLine.substring(lastIdx, hl.start));
         }
-        highlightedLine += `<mark class="highlight-${hl.severity}">${escapeHtml(line.substring(hl.start, hl.end))}</mark>`;
-        lastEnd = hl.end;
+        highlighted += `<mark class="highlight-${hl.severity}">${escapeHtml(rawLine.substring(hl.start, hl.end))}</mark>`;
+        lastIdx = hl.end;
       }
-      
-      if (lastEnd < line.length) {
-        highlightedLine += escapeHtml(line.substring(lastEnd));
+      if (lastIdx < rawLine.length) {
+        highlighted += escapeHtml(rawLine.substring(lastIdx));
       }
-      
-      result += `<span class="code-line"><span class="line-number">${String(lineNum).padStart(4, ' ')}</span><span class="line-content">${highlightedLine}</span></span>\n`;
+      result += `<span class="code-line"><span class="line-number">${String(lineNum).padStart(4, ' ')}</span><span class="line-content">${highlighted}</span></span>\n`;
     }
   }
-  
   return result;
 }
