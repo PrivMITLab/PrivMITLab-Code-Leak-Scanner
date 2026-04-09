@@ -122,7 +122,7 @@ export const SECRET_PATTERNS: Pattern[] = [
     type: 'Authentication',
     description: 'Basic authentication header detected'
   },
-  // ✅ FIXED: Now matches google_api = "...", aws_api = "...", etc.
+  // FIXED: Now matches google_api = "...", aws_api = "...", etc. (with prefix)
   {
     name: 'Generic API Key (long)',
     regex: /(?:\w+_)?(?:api|apikey|api_key|apiKey)["\s:=]+["']?[A-Za-z0-9_-]{32,}["']?/gi,
@@ -130,13 +130,13 @@ export const SECRET_PATTERNS: Pattern[] = [
     type: 'API Key',
     description: 'Possible API key detected (length ≥32)'
   },
-  // ✅ FIXED: Now matches aws_secret, db_secret, etc.
+  // FIXED: Minimum length increased from 8 to 32 – short secrets (e.g., temp_secret_99) get LOW severity only
   {
     name: 'Secret Assignment (long)',
-    regex: /(?:\w+_)?(?:secret|client_secret)["\s:=]+["'][^"']{8,}["']/gi,
+    regex: /(?:\w+_)?(?:secret|client_secret)["\s:=]+["'][^"']{32,}["']/gi,
     severity: 'medium',
     type: 'Secret',
-    description: 'Secret value detected'
+    description: 'Secret value detected (length ≥32)'
   },
   {
     name: 'Generic Secret Token (long)',
